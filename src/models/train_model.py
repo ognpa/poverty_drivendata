@@ -2,14 +2,14 @@
 Module to fit estimators and perform local cross-validation.
 """
 import os
-from pdb import set_trace
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GridSearchCV, cross_val_score
+from hyperopt import hp, fmin, tpe, Trials, space_eval
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Imputer
-from sklearn.linear_model import LogisticRegression
 
 from src import DATA_DIR
 from src.features.build_features import get_cols, le_columns
@@ -31,20 +31,26 @@ def prepare_data(df):
 
 def estimate_local_cv(X, y):
     pipe = Pipeline([('imputer', Imputer()),
-                     ('clf', LogisticRegression(random_state=0))])
-    gs = GridSearchCV(
-        estimator=pipe,
-        scoring='neg_log_loss',
-        param_grid=[{
-            'clf__C': [0.01, 0.1, 0.5, 1]
-        }],
-        cv=5,
-        n_jobs=-1,
-        verbose=3
-    )
-    set_trace()
-    scores = cross_val_score(gs, X, y, scoring='neg_log_loss', cv=2)
-    return scores
+                     ('clf', LogisticRegression(class_weight='balanced'))])
+    space = {}
+    space['clf__C'] = hp.uniform('clf__C', 0.001, 1.)
+    space['clf__class_weight'] = hp.choice('clf__class_weight', ['balanced', None])
+
+    def objective(params):
+        """Objective is to minimize log_loss. So, output log_loss scores."""
+        pipe.set_params(**params)
+        scores = cross_val_score(pipe, X, y, scoring='neg_log_loss', cv=2, n_jobs=1)
+        return -1.0 * scores.mean()
+
+    # to store details of each iteration
+    trials = Trials()
+
+    # run hyperparameter search using tpe algorithm
+    best = fmin(objective, space, algo=tpe.suggest, max_evals=100, trials=trials, verbose=2)
+
+    # get values of optimal parameters
+    best_params = space_eval(space, best)
+    return objective(best_params)
 
 
 def cv_setup(country):
@@ -57,4 +63,4 @@ def cv_setup(country):
 
 
 if __name__ == '__main__':
-    print(cv_setup('C'))
+    print(cv_setup('B'))
