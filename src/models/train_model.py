@@ -2,6 +2,7 @@
 Module to fit estimators and perform local cross-validation.
 """
 import os
+import logging
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,8 @@ def prepare_data(df):
     cat_cols, cols_to_drop = get_cols(df)
     df = df.pipe(le_columns, cat_cols)
     feature_columns = set(df.columns) - set(['id', 'country', 'poor']) - set(cols_to_drop)
+    logging.debug('Before any feature selection, %s columns have been chosen as features',
+                  len(feature_columns))
     X = df.loc[:, feature_columns].as_matrix()
     try:
         y = df.loc[:, 'poor'].as_matrix()
@@ -29,7 +32,8 @@ def prepare_data(df):
     return X, y
 
 
-def estimate_local_cv(X, y):
+def _estimate_local_cv(X, y):
+    """Estimate of the score using 2x5, i.e. nested cross-validation strategies."""
     pipe = Pipeline([('imputer', Imputer()),
                      ('clf', LogisticRegression(class_weight='balanced'))])
     space = {}
@@ -43,14 +47,16 @@ def estimate_local_cv(X, y):
         return -1.0 * scores.mean()
 
     # to store details of each iteration
+    # Note: with MongoTrials() as mentioned in http://bit.ly/2miT1Uc
+    # custom objective functions don't work because of pickling errors
     trials = Trials()
 
     # run hyperparameter search using tpe algorithm
-    best = fmin(objective, space, algo=tpe.suggest, max_evals=100, trials=trials, verbose=2)
+    best = fmin(objective, space, algo=tpe.suggest, max_evals=40, trials=trials, verbose=3)
 
     # get values of optimal parameters
     best_params = space_eval(space, best)
-    return objective(best_params)
+    return pipe, best_params, objective(best_params)
 
 
 def cv_setup(country):
@@ -58,9 +64,9 @@ def cv_setup(country):
     of log_loss scores of all countries."""
     df = pd.read_csv(os.path.join(DATA_DIR, 'raw', '{}_hhold_train.csv'.format(country)))
     X, y = prepare_data(df)
-    scores = estimate_local_cv(X, y)
-    return np.mean(scores)
-
-
-if __name__ == '__main__':
-    print(cv_setup('B'))
+    pipe, best_params, score = _estimate_local_cv(X, y)
+    logging.debug('Local CV score for country %s is %s', country, score)
+    logging.debug('Optimal parameters: %s', best_params)
+    pipe.set_params(**best_params)
+    pipe = pipe.fit(X, y)
+    return pipe, best_params, score

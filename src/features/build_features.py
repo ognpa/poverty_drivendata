@@ -11,7 +11,6 @@ def get_metafeatures(df):
 
     Returns a metadata DataFrame.
     """
-    logging.info('Creating metafeatures dataframe.')
     metafeatures = []
     rows = df.shape[0]
     for col in df.columns:
@@ -35,7 +34,7 @@ def le_columns(df, columns):
     --------
     Transformed dataframe
     """
-    logging.info('LabelEncoder for %s columns', len(columns))
+    logging.debug('LabelEncoding %s columns', len(columns))
     le = LabelEncoder()
     for col in columns:
         df.loc[:, col] = le.fit_transform(df[col])
@@ -47,4 +46,6 @@ def get_cols(df):
     meta = get_metafeatures(df)
     categorical_columns = meta.loc[meta['type'] == 'object', 'column'].tolist()
     cols_to_drop = meta.loc[meta['missing'] > 0.5, 'column'].tolist()
+    logging.debug('%s categorical columns found', len(categorical_columns))
+    logging.debug('%s columns will be dropped', len(cols_to_drop))
     return categorical_columns, cols_to_drop

@@ -2,19 +2,19 @@
 import os
 import logging
 
-from src.models.train_model import prepare_data
+import pandas as pd
+
+from src.models.train_model import prepare_data, cv_setup
 from src import DATA_DIR
 
-def get_predictions(country, grid):
-    """Get predictions using the best model from grid search"""
-    hhold_csv_train = os.path.join(DATA_DIR, 'raw', '{}_hhold_train.csv'.format(country))
-    df = pd.read_csv(hhold_csv_train)
-    X, y = prepare_data(df)
-    grid.fit(X, y)
+
+def get_predictions(country, pipe, params):
+    """Get predictions using the best model from grid search or hyperopt search."""
     hhold_csv_test = os.path.join(DATA_DIR, 'raw', '{}_hhold_test.csv'.format(country))
     test = pd.read_csv(hhold_csv_test)
     X_test, _ = prepare_data(test)
-    preds = grid.best_estimator_.predict_proba(X_test)
+    logging.debug('Fitting test data with params %s', params)
+    preds = pipe.set_params(**params).predict_proba(X_test)
     return preds, test
 
 
@@ -29,7 +29,9 @@ def submit_predictions(preds, test, country):
     return country_sub[['country', 'poor']].reset_index()
 
 
-def main(country, grid):
-    """Everything packaged here."""
-    preds, test = get_predictions(country, grid)
+def main(country):
+    """Everything packaged here. Trains first, then predicts."""
+    pipe, params, score = cv_setup(country)
+    logging.info('Now, computing predictions')
+    preds, test = get_predictions(country, pipe, params)
     return submit_predictions(preds, test, country)
