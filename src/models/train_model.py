@@ -1,18 +1,21 @@
+"""
+Module to fit estimators and perform local cross-validation.
+"""
 import os
-import logging
+from pdb import set_trace
 
+import numpy as np
 import pandas as pd
+from sklearn.model_selection import GridSearchCV, cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import Imputer
+from sklearn.linear_model import LogisticRegression
 
-# preprocessing and feature selection
-from sklearn.metrics import log_loss
-from sklearn.model_selection import StratifiedShuffleSplit
-
-
-from src.features.build_features import get_cols, le_columns
 from src import DATA_DIR
+from src.features.build_features import get_cols, le_columns
 
 
-def get_X_y(df):
+def prepare_data(df):
     """Drop columns, build features, impute missing values and return X and y,
     for training."""
     cat_cols, cols_to_drop = get_cols(df)
@@ -26,45 +29,32 @@ def get_X_y(df):
     return X, y
 
 
-def local_cv_score(country, grid):
-    """Check local cv scores using a train-test split of 80-20."""
-    hhold_csv_train = os.path.join(DATA_DIR, 'raw', '{}_hhold_train.csv'.format(country))
-    df = pd.read_csv(hhold_csv_train)
-    X, y = get_X_y(df)
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=2)
-    for train_index, test_index in sss.split(X, y):
-        X_train, X_test = X[train_index], X[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-    grid.fit(X_train, y_train)
-    preds = grid.best_estimator_.predict_proba(X_test)[:, 1]
-    return log_loss(y_test, preds)
+def estimate_local_cv(X, y):
+    pipe = Pipeline([('imputer', Imputer()),
+                     ('clf', LogisticRegression(random_state=0))])
+    gs = GridSearchCV(
+        estimator=pipe,
+        scoring='neg_log_loss',
+        param_grid=[{
+            'clf__C': [0.01, 0.1, 0.5, 1]
+        }],
+        cv=5,
+        n_jobs=-1,
+        verbose=3
+    )
+    set_trace()
+    scores = cross_val_score(gs, X, y, scoring='neg_log_loss', cv=2)
+    return scores
 
 
-def get_predictions(country, grid):
-    """Get predictions using the best model from grid search"""
-    hhold_csv_train = os.path.join(DATA_DIR, 'raw', '{}_hhold_train.csv'.format(country))
-    df = pd.read_csv(hhold_csv_train)
-    X, y = get_X_y(df)
-    grid.fit(X, y)
-    hhold_csv_test = os.path.join(DATA_DIR, 'raw', '{}_hhold_test.csv'.format(country))
-    test = pd.read_csv(hhold_csv_test)
-    X_test, _ = get_X_y(test)
-    preds = grid.best_estimator_.predict_proba(X_test)
-    return preds, test
+def cv_setup(country):
+    """Helper function to return the cv scores for a country. Overall log_loss is mean
+    of log_loss scores of all countries."""
+    df = pd.read_csv(os.path.join(DATA_DIR, 'raw', '{}_hhold_train.csv'.format(country)))
+    X, y = prepare_data(df)
+    scores = estimate_local_cv(X, y)
+    return np.mean(scores)
 
 
-def make_subs(preds, test_feat, country):
-    """Make submission."""
-    country_sub = pd.DataFrame(data=preds[:, 1],
-                               columns=['poor'],
-                               index=test_feat['id'])
-    # add country code for joining later
-    country_sub['country'] = country
-    # write submission
-    return country_sub[['country', 'poor']].reset_index()
-
-
-def main(country, grid):
-    """Everything packaged here."""
-    preds, test = get_predictions(country, grid)
-    return make_subs(preds, test, country)
+if __name__ == '__main__':
+    print(cv_setup('C'))
