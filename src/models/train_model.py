@@ -7,7 +7,7 @@ import logging
 import numpy as np
 import pandas as pd
 from hyperopt import hp, fmin, tpe, Trials, space_eval
-from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Imputer
@@ -34,16 +34,21 @@ def prepare_data(df):
 
 def _estimate_local_cv(X, y):
     """Estimate of the score using 2x5, i.e. nested cross-validation strategies."""
-    pipe = Pipeline([('imputer', Imputer()),
-                     ('clf', LogisticRegression(class_weight='balanced'))])
+    pipe = Pipeline([('clf', XGBClassifier(objective='binary:logistic'))])
     space = {}
-    space['clf__C'] = hp.uniform('clf__C', 0.001, 1.)
-    space['clf__class_weight'] = hp.choice('clf__class_weight', ['balanced', None])
+    space['clf__max_depth'] = 5 + hp.randint('clf__max_depth', 5)   # (5, 10)
+    space['clf__learning_rate'] = hp.uniform('clf__learning_rate', 0.01, 3.0)
+    space['clf__n_estimators'] = 70 + 5*hp.randint('clf__n_estimators', 10) # 50:5:100
+    space['clf__gamma'] = hp.loguniform('clf__gamma', 0.1, 1.0)
+    space['clf__min_child_weight'] = 1 + hp.randint('clf__min_child_weight', 9) # (2, 10)
+    space['clf__max_delta_step'] = hp.uniform('clf__max_delta_step', 0.0, 0.1)
+    space['clf__subsample'] = hp.uniform('clf__subsample', 0.5, 1.0)
+    space['clf__colsample_bytree'] = hp.uniform('clf__colsample_bytree', 0.5, 1.)
 
     def objective(params):
         """Objective is to minimize log_loss. So, output log_loss scores."""
         pipe.set_params(**params)
-        scores = cross_val_score(pipe, X, y, scoring='neg_log_loss', cv=2, n_jobs=1)
+        scores = cross_val_score(pipe, X, y, scoring='neg_log_loss', cv=2, n_jobs=-1)
         return -1.0 * scores.mean()
 
     # to store details of each iteration
@@ -52,7 +57,7 @@ def _estimate_local_cv(X, y):
     trials = Trials()
 
     # run hyperparameter search using tpe algorithm
-    best = fmin(objective, space, algo=tpe.suggest, max_evals=40, trials=trials, verbose=3)
+    best = fmin(objective, space, algo=tpe.suggest, max_evals=50, trials=trials, verbose=3)
 
     # get values of optimal parameters
     best_params = space_eval(space, best)
